@@ -119,10 +119,10 @@ func checkLand(userID int64, _type, ip string, client *redis.Client, dataSql *go
 	}
 
 	if strings.EqualFold(history.LoginIp, ip) {
+		lastKey = fmt.Sprintf("land:%v:%v_%v", history.UserId, history.LoginIp, history.ClientType)
+		client.Set(lastKey, time.Now().Format("2006-01-02 03:04:05"), time.Second*300) //5分钟
 		return true
 	}
-	lastKey = fmt.Sprintf("land:%v:%v_%v", history.UserId, history.LoginIp, history.ClientType)
-	client.Set(lastKey, time.Now().Format("2006-01-02 03:04:05"), time.Second*300) //5分钟
 	return false
 }
 
