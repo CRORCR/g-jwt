@@ -6,14 +6,45 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/go-redis/redis"
 	"github.com/jinzhu/gorm"
+	"reflect"
+	"strconv"
 	"strings"
 	"time"
 )
 
+//func main() {
+//	//v,e:=VerifyJwt(PubKey,
+//	//	`eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE1NzUwNTkyNTIsImlhdCI6MTU3NDkwOTI1MiwicGF5bG9hZCI6eyJ1c2VyX2lkIjoxMTI3MDU2fX0.a9aKNLcT1JHIZm3pGJnyIspD7zO1wwRYcMJxB4Gtd3XhmO8VOLfPcFSmYPx3nufeLwN6y9A8Qg8xHvjVuo7SeFvAcmrH0xkB8y4d_LIiUcFWd2uOaThCxob1tEgH3qSEeY-4LOY7TMp8igusqCTYk_mnOnuSIPKEsUqBijWYmeJI16QMdbQMwNVYEgZ7dJCxugORWPIxXExUtPVV10gtwCZmJij1R0EcFYMUgE6NdFOzfK0KMGy91Zx9w68HOOpDo-NUndSHjbxyhErF075WLZmuazPCRz4s7PmF-ynoU99BpuX6uQ3YV6u-OpC62RJ58gxcfJgO1FcMrrULzSDEMA`)
+//	//fmt.Println(v)
+//	//fmt.Println(e)
+//
+//	v,e:=Jwt.VerifyJwt(
+//		`eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE1NzUwNTkyNTIsImlhdCI6MTU3NDkwOTI1MiwicGF5bG9hZCI6eyJ1c2VyX2lkIjoxMTI3MDU2fX0.a9aKNLcT1JHIZm3pGJnyIspD7zO1wwRYcMJxB4Gtd3XhmO8VOLfPcFSmYPx3nufeLwN6y9A8Qg8xHvjVuo7SeFvAcmrH0xkB8y4d_LIiUcFWd2uOaThCxob1tEgH3qSEeY-4LOY7TMp8igusqCTYk_mnOnuSIPKEsUqBijWYmeJI16QMdbQMwNVYEgZ7dJCxugORWPIxXExUtPVV10gtwCZmJij1R0EcFYMUgE6NdFOzfK0KMGy91Zx9w68HOOpDo-NUndSHjbxyhErF075WLZmuazPCRz4s7PmF-ynoU99BpuX6uQ3YV6u-OpC62RJ58gxcfJgO1FcMrrULzSDEMA`,
+//		"il","ni",nil,nil)
+//	fmt.Println(v)
+//	fmt.Println(e)
+//
+//}
+
 type JwtClass struct {
 }
 
-var PubKey = `-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAo8NP+SYklqU1kTHrCRVQ\no2VI9jg3pxbCG6wXdmpoSwt30TeIWYUnBhDDZ22eLWADYPci5HwIRw6kphadDHB/\nK0cE79QWpo9hOo8/3hXCr0Tfs2MG5xlolqTn/svdf/tBtUypxe828mKU+YuNavX+\n8F60Yunq8ZRoaRlO3T+O0App4A6at5umG7qncZdL/GOzyyw8K+cYVkXN6DSOUs7T\ncigFMKywMuW1wh0SCDZjmebUGO+S4KKw1oEnzP6zO6RQqTfJVGsQnNJkczQ8vUQ/\n8l8Y2WohU/zmCsPgr/suSdyHWMv0KEoDjB0hCbhx3Aqy1GpYw/6gj1M949JN10Ti\n0wIDAQAB\n-----END PUBLIC KEY-----`
+var PubKey = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAo8NP+SYklqU1kTHrCRVQ\no2VI9jg3pxbCG6wXdmpoSwt30TeIWYUnBhDDZ22eLWADYPci5HwIRw6kphadDHB/\nK0cE79QWpo9hOo8/3hXCr0Tfs2MG5xlolqTn/svdf/tBtUypxe828mKU+YuNavX+\n8F60Yunq8ZRoaRlO3T+O0App4A6at5umG7qncZdL/GOzyyw8K+cYVkXN6DSOUs7T\ncigFMKywMuW1wh0SCDZjmebUGO+S4KKw1oEnzP6zO6RQqTfJVGsQnNJkczQ8vUQ/\n8l8Y2WohU/zmCsPgr/suSdyHWMv0KEoDjB0hCbhx3Aqy1GpYw/6gj1M949JN10Ti\n0wIDAQAB\n-----END PUBLIC KEY-----"
+
+func VerifyJwt(pubKey string, tokenStr string) (bool, error) {
+	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+		verifyKey, err := jwt.ParseRSAPublicKeyFromPEM([]byte(pubKey))
+		if err != nil {
+			return nil, err
+		}
+		return verifyKey, nil
+	})
+	if err != nil {
+		return false, errors.New("jwt verify error")
+	} else {
+		return token.Valid, nil
+	}
+}
 
 var Jwt = JwtClass{}
 
@@ -45,11 +76,11 @@ func (this *JwtClass) VerifyJwt(tokenStr string, clientType string, address stri
 	}
 	claims := jwt.MapClaims{}
 	jwt.ParseWithClaims(tokenStr, claims, nil)
-	userID := claims[`payload`].(map[string]interface{})["user_id"]
-	if userID.(int64) == 0 {
+	userID := ToInt64(claims[`payload`].(map[string]interface{})["user_id"])
+	if userID == 0 {
 		return false, errors.New("clash login")
 	}
-	if checkLand(userID.(int64), clientType, address, client, dataSql) {
+	if checkLand(userID, clientType, address, client, dataSql) {
 		return token.Valid, nil
 	} else {
 		return false, errors.New("clash login")
@@ -140,4 +171,29 @@ func (this *JwtClass) MustDecodeBodyOfJwt(tokenStr string) map[string]interface{
 
 func (this *JwtClass) MustDecodePayloadOfJwtBody(tokenStr string) map[string]interface{} {
 	return this.MustDecodeBodyOfJwt(tokenStr)[`payload`].(map[string]interface{})
+}
+
+func ToInt64(val interface{}) int64 {
+	kind := reflect.TypeOf(val).Kind()
+	if kind == reflect.Int64 {
+		return val.(int64)
+	} else if kind == reflect.String {
+		int_, err := strconv.ParseInt(val.(string), 10, 64)
+		if err != nil {
+			panic(err)
+		}
+		return int_
+	} else if kind == reflect.Float64 {
+		return int64(val.(float64))
+	} else if kind == reflect.Uint64 {
+		return int64(val.(uint64))
+	} else if kind == reflect.Uint8 {
+		int_, err := strconv.ParseInt(string(val.(uint8)), 10, 64)
+		if err != nil {
+			panic(err)
+		}
+		return int_
+	} else {
+		panic(errors.New(`convert not supported: ` + kind.String()))
+	}
 }
