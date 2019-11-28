@@ -50,6 +50,12 @@ func (this *JwtClass) VerifyJwt(tokenStr string, userID int64, clientType string
 	}
 }
 
+func DecodePayloadOfJwtBody(tokenStr string) map[string]interface{} {
+	claims := jwt.MapClaims{}
+	jwt.ParseWithClaims(tokenStr, claims, nil)
+	return claims[`payload`].(map[string]interface{})
+}
+
 func checkLand(userID int64, _type, ip string, client *redis.Client, dataSql *gorm.DB) bool {
 	lastKey := fmt.Sprintf("land:%v:%v_%v", userID, ip, _type)
 	_, err := client.Get(lastKey).Result()
