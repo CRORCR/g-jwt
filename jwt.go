@@ -32,7 +32,7 @@ func (this *JwtClass) GetJwt(privKey string, expireDuration time.Duration, paylo
 	return tokenString, nil
 }
 
-func (this *JwtClass) VerifyJwt(tokenStr string, userID int64, clientType string, address string, client *redis.Client, dataSql *gorm.DB) (bool, error) {
+func (this *JwtClass) VerifyJwt(tokenStr string, clientType string, address string, client *redis.Client, dataSql *gorm.DB) (bool, error) {
 	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
 		verifyKey, err := jwt.ParseRSAPublicKeyFromPEM([]byte(PubKey))
 		if err != nil {
@@ -43,6 +43,10 @@ func (this *JwtClass) VerifyJwt(tokenStr string, userID int64, clientType string
 	if err != nil {
 		return false, err
 	}
+	claims := jwt.MapClaims{}
+	jwt.ParseWithClaims(tokenStr, claims, nil)
+	userID := claims[`payload`].(map[string]interface{})["user_id"]
+
 	if checkLand(userID, clientType, address, client, dataSql) {
 		return token.Valid, nil
 	} else {
@@ -56,8 +60,8 @@ func DecodePayloadOfJwtBody(tokenStr string) map[string]interface{} {
 	return claims[`payload`].(map[string]interface{})
 }
 
-func checkLand(userID int64, _type, ip string, client *redis.Client, dataSql *gorm.DB) bool {
-	lastKey := fmt.Sprintf("land:%v:%v_%v", userID, ip, _type)
+func checkLand(userID interface{}, _type, ip string, client *redis.Client, dataSql *gorm.DB) bool {
+	lastKey := fmt.Sprintf("land:%s:%s_%s", userID, ip, _type)
 	_, err := client.Get(lastKey).Result()
 	if err == nil {
 		fmt.Println("存在记录，返回ok")
@@ -84,7 +88,7 @@ func checkLand(userID int64, _type, ip string, client *redis.Client, dataSql *go
 	if strings.EqualFold(history.LoginIp, ip) {
 		return true
 	}
-	lastKey = fmt.Sprintf("land:%v:%v_%v", history.UserId, history.LoginIp, history.ClientType)
+	lastKey = fmt.Sprintf("land:%s:%s_%s", history.UserId, history.LoginIp, history.ClientType)
 	client.Set(lastKey, time.Now().Format("2006-01-02 03:04:05"), time.Second*300) //5分钟
 	return false
 }
