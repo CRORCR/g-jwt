@@ -66,6 +66,9 @@ func DecodePayloadOfJwtBody(tokenStr string) map[string]interface{} {
 }
 
 func checkLand(userID int64, _type, ip string, client *redis.Client, dataSql *gorm.DB) bool {
+	if strings.EqualFold(_type, "") {
+		_type = "web"
+	}
 	lastKey := fmt.Sprintf("land:%v:%v_%v", userID, ip, _type)
 	_, err := client.Get(lastKey).Result()
 	if err == nil {
