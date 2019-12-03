@@ -83,7 +83,11 @@ func checkLand(userID int64, _type, ip string, client *redis.Client, dataSql *go
 		CreatedAt  time.Time `db:"created_at"`
 	}
 
-	err = dataSql.Table("login_history").Where("user_id=? and client_type=?", userID, _type).Order("created_at desc").First(&history).Error
+	if strings.EqualFold("android", _type) || strings.EqualFold("ios", _type) {
+		err = dataSql.Table("login_history").Where("user_id=? and (client_type='ios' or client_type='android')", userID).Order("created_at desc").First(&history).Error
+	} else {
+		err = dataSql.Table("login_history").Where("user_id=? and client_type=?", userID, _type).Order("created_at desc").First(&history).Error
+	}
 
 	if err != nil {
 		return false
