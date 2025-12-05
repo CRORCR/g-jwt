@@ -1,8 +1,12 @@
 module github.com/CRORCR/g-jwt
 
+go 1.25.3
+
+require github.com/golang-jwt/jwt/v5 v5.3.0
+
 require (
-	github.com/dgrijalva/jwt-go v3.2.0+incompatible
-	github.com/go-redis/redis v6.15.6+incompatible // indirect
-	github.com/jinzhu/gorm v1.9.11 // indirect
-	github.com/pefish/go-error v0.2.0
+	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/stretchr/testify v1.11.1
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
