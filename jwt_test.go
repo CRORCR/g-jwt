@@ -51,7 +51,7 @@ func TestJWTFlow(t *testing.T) {
 	t.Logf("生成的刷新令牌: %s", tokenPair.RefreshToken)
 
 	// 步骤3：验证访问令牌
-	validatedClaims, err := manager.ValidateToken(tokenPair.AccessToken)
+	validatedClaims, err := manager.ValidateToken(claims.DeviceID, tokenPair.AccessToken)
 	require.NoError(t, err, "验证访问令牌应该成功")
 	assert.Equal(t, claims.UserID, validatedClaims.UserID, "用户ID应该匹配")
 	assert.Equal(t, claims.Email, validatedClaims.Email, "邮箱应该匹配")
@@ -59,7 +59,7 @@ func TestJWTFlow(t *testing.T) {
 	assert.Equal(t, claims.Platform, validatedClaims.Platform, "平台应该匹配")
 
 	// 步骤4：提取完整用户信息
-	userInfo, err := manager.ExtractUserInfo(tokenPair.AccessToken)
+	userInfo, err := manager.ExtractUserInfo(claims.DeviceID, tokenPair.AccessToken)
 	require.NoError(t, err, "提取用户信息应该成功")
 	assert.Equal(t, claims.UserID, userInfo.UserID, "用户ID应该匹配")
 	assert.Equal(t, claims.Email, userInfo.Email, "邮箱应该匹配")
@@ -74,15 +74,21 @@ func TestJWTFlow(t *testing.T) {
 		userInfo.UserID, userInfo.Email, userInfo.DeviceID)
 
 	// 步骤5：使用刷新令牌获取新的令牌对
-	newTokenPair, err := manager.RefreshToken(
-		tokenPair.RefreshToken,
-		claims.DeviceID,
-		claims.UserID,
-		"192.168.1.101", // 新的IP
-		"US",            // 新的国家
-		"mac",
-		"1.0.1", // 新的版本
-	)
+	// 准备新的Claims，可以更新IP、国家、版本等信息
+	newClaims := &JWTClaims{
+		UserInfo: UserInfo{
+			UserID:       claims.UserID,       // 用户ID和设备ID必须与刷新令牌匹配
+			DeviceID:     claims.DeviceID,     // 用户ID和设备ID必须与刷新令牌匹配
+			Email:        claims.Email,        // 保持原有信息
+			Phone:        claims.Phone,        // 保持原有信息
+			Platform:     claims.Platform,     // 保持平台信息
+			IP:           "192.168.1.101",     // 更新为新的IP
+			Country:      "US",                // 更新为新的国家
+			Version:      "1.0.1",             // 更新为新的版本
+			RegisterTime: claims.RegisterTime, // 保持注册时间
+		},
+	}
+	newTokenPair, err := manager.RefreshToken(newClaims.DeviceID, tokenPair.RefreshToken, newClaims)
 	require.NoError(t, err, "刷新令牌应该成功")
 	assert.NotEmpty(t, newTokenPair.AccessToken, "新的访问令牌不应为空")
 	assert.NotEmpty(t, newTokenPair.RefreshToken, "新的刷新令牌不应为空")
@@ -111,7 +117,7 @@ func TestExtractUserID(t *testing.T) {
 	tokenPair, err := manager.GenerateToken(claims)
 	require.NoError(t, err)
 
-	userInfo, err := manager.ExtractUserInfo(tokenPair.AccessToken)
+	userInfo, err := manager.ExtractUserInfo(claims.DeviceID, tokenPair.AccessToken)
 	require.NoError(t, err)
 	assert.Equal(t, claims.UserID, userInfo.UserID, "提取的用户ID应该匹配")
 }
@@ -136,7 +142,7 @@ func TestExtractDeviceID(t *testing.T) {
 	tokenPair, err := manager.GenerateToken(claims)
 	require.NoError(t, err)
 
-	userInfo, err := manager.ExtractUserInfo(tokenPair.AccessToken)
+	userInfo, err := manager.ExtractUserInfo(claims.DeviceID, tokenPair.AccessToken)
 	require.NoError(t, err)
 	assert.Equal(t, claims.DeviceID, userInfo.DeviceID, "提取的设备ID应该匹配")
 }
@@ -151,11 +157,11 @@ func TestInvalidToken(t *testing.T) {
 	)
 
 	// 测试空令牌
-	_, err := manager.ValidateToken("")
+	_, err := manager.ValidateToken("test-device", "")
 	assert.Error(t, err, "空令牌应该返回错误")
 
 	// 测试无效格式的令牌
-	_, err = manager.ValidateToken("invalid.token.format")
+	_, err = manager.ValidateToken("test-device", "invalid.token.format")
 	assert.Error(t, err, "无效格式的令牌应该返回错误")
 
 	// 测试篡改过的令牌
@@ -171,7 +177,7 @@ func TestInvalidToken(t *testing.T) {
 
 	// 篡改令牌（在末尾添加字符）
 	tamperedToken := tokenPair.AccessToken + "tampered"
-	_, err = manager.ValidateToken(tamperedToken)
+	_, err = manager.ValidateToken(claims.DeviceID, tamperedToken)
 	assert.Error(t, err, "篡改过的令牌应该返回错误")
 }
 
@@ -200,7 +206,7 @@ func TestExpiredToken(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// 尝试验证过期的令牌
-	_, err = manager.ValidateToken(tokenPair.AccessToken)
+	_, err = manager.ValidateToken(claims.DeviceID, tokenPair.AccessToken)
 	assert.Error(t, err, "过期的令牌应该返回错误")
 }
 
@@ -225,28 +231,26 @@ func TestRefreshTokenMismatch(t *testing.T) {
 	require.NoError(t, err)
 
 	// 测试用户ID不匹配
-	_, err = manager.RefreshToken(
-		tokenPair.RefreshToken,
-		"original-device",
-		99999, // 错误的用户ID
-		"192.168.1.1",
-		"CN",
-		"win",
-		"1.0.0",
-	)
+	wrongUserIDClaims := &JWTClaims{
+		UserInfo: UserInfo{
+			UserID:   99999, // 错误的用户ID
+			DeviceID: "original-device",
+			Platform: "win",
+		},
+	}
+	_, err = manager.RefreshToken(wrongUserIDClaims.DeviceID, tokenPair.RefreshToken, wrongUserIDClaims)
 	assert.Error(t, err, "用户ID不匹配应该返回错误")
 	assert.Contains(t, err.Error(), "用户ID不匹配", "错误信息应该包含'用户ID不匹配'")
 
 	// 测试设备ID不匹配
-	_, err = manager.RefreshToken(
-		tokenPair.RefreshToken,
-		"wrong-device", // 错误的设备ID
-		33333,
-		"192.168.1.1",
-		"CN",
-		"win",
-		"1.0.0",
-	)
+	wrongDeviceClaims := &JWTClaims{
+		UserInfo: UserInfo{
+			UserID:   33333,
+			DeviceID: "wrong-device", // 错误的设备ID
+			Platform: "win",
+		},
+	}
+	_, err = manager.RefreshToken(wrongDeviceClaims.DeviceID, tokenPair.RefreshToken, wrongDeviceClaims)
 	assert.Error(t, err, "设备ID不匹配应该返回错误")
 	assert.Contains(t, err.Error(), "设备ID不匹配", "错误信息应该包含'设备ID不匹配'")
 }
@@ -272,14 +276,17 @@ func TestAccessTokenAsRefreshToken(t *testing.T) {
 	require.NoError(t, err)
 
 	// 尝试将访问令牌当作刷新令牌使用
+	refreshClaims := &JWTClaims{
+		UserInfo: UserInfo{
+			UserID:   44444,
+			DeviceID: "test-device",
+			Platform: "ios",
+		},
+	}
 	_, err = manager.RefreshToken(
+		refreshClaims.DeviceID,
 		tokenPair.AccessToken, // 错误：使用访问令牌而不是刷新令牌
-		"test-device",
-		44444,
-		"192.168.1.1",
-		"CN",
-		"ios",
-		"1.0.0",
+		refreshClaims,
 	)
 	assert.Error(t, err, "访问令牌不应该被当作刷新令牌使用")
 	assert.Contains(t, err.Error(), "不是刷新令牌", "错误信息应该包含'不是刷新令牌'")
@@ -314,6 +321,44 @@ func TestDifferentSecretKey(t *testing.T) {
 		"test-issuer",
 	)
 
-	_, err = manager2.ValidateToken(tokenPair.AccessToken)
+	_, err = manager2.ValidateToken(claims.DeviceID, tokenPair.AccessToken)
 	assert.Error(t, err, "使用不同密钥验证令牌应该失败")
+}
+
+// TestDeviceIDMismatch 测试设备ID不匹配时访问令牌验证失败
+func TestDeviceIDMismatch(t *testing.T) {
+	manager := NewJWTManager(
+		"test-secret-key-for-jwt-signing-at-least-32-chars",
+		15*time.Minute,
+		7*24*time.Hour,
+		"test-issuer",
+	)
+
+	// 用户在设备A上登录，生成令牌
+	claims := &JWTClaims{
+		UserInfo: UserInfo{
+			UserID:   66666,
+			DeviceID: "device-A",
+			Platform: "mac",
+			Email:    "user@example.com",
+		},
+	}
+
+	tokenPair, err := manager.GenerateToken(claims)
+	require.NoError(t, err)
+
+	// 测试在正确的设备上验证令牌（应该成功）
+	validatedClaims, err := manager.ValidateToken("device-A", tokenPair.AccessToken)
+	require.NoError(t, err, "在正确的设备上验证应该成功")
+	assert.Equal(t, claims.UserID, validatedClaims.UserID, "用户ID应该匹配")
+
+	// 测试在错误的设备上验证令牌（应该失败，防止令牌盗用）
+	_, err = manager.ValidateToken("device-B", tokenPair.AccessToken)
+	assert.Error(t, err, "在不同设备上验证应该失败")
+	assert.Contains(t, err.Error(), "设备ID不匹配", "错误信息应该包含'设备ID不匹配'")
+
+	// 测试提取用户信息时设备ID不匹配
+	_, err = manager.ExtractUserInfo("device-C", tokenPair.AccessToken)
+	assert.Error(t, err, "使用错误的设备ID提取用户信息应该失败")
+	assert.Contains(t, err.Error(), "设备ID不匹配", "错误信息应该包含'设备ID不匹配'")
 }

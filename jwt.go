@@ -22,11 +22,10 @@ type UserInfo struct {
 	RegisterTime int64  `json:"registerTime,omitempty"` // 注册时间（Unix时间戳）
 }
 
-// JWTClaims JWT载荷结构体
+// JWTClaims
 // 用于访问令牌(Access Token)的payload部分
-// 组合了UserInfo和JWT标准声明
 type JWTClaims struct {
-	UserInfo             // 嵌入用户信息，字段会被提升到外层
+	UserInfo
 	jwt.RegisteredClaims // JWT标准声明字段（iss、exp、iat等）
 }
 
@@ -38,23 +37,17 @@ type JWTManager struct {
 	issuer        string        // 令牌签发者
 }
 
-// JWTToken JWT令牌对
-// 包含访问令牌和刷新令牌
-// 访问令牌用于API调用，刷新令牌用于获取新的访问令牌
+// JWTToken accessToken用于API调用，refreshToken获取新的token
 type JWTToken struct {
-	AccessToken  string `json:"accessToken"`  // 访问令牌，用于API请求认证
-	RefreshToken string `json:"refreshToken"` // 刷新令牌，用于获取新的访问令牌
-	ExpiresIn    int64  `json:"expiresIn"`    // 访问令牌过期时间，单位：秒
+	AccessToken  string `json:"accessToken"`
+	RefreshToken string `json:"refreshToken"`
+	ExpiresIn    int64  `json:"expiresIn"` // accessToken过期时间，单位：秒
 }
 
 // NewJWTManager 创建JWT管理器
 // 参数：
 //   - secretKey: 用于签名的密钥，建议使用强随机字符串（至少32字符）
-//   - accessExpiry: 访问令牌有效期，建议15分钟到1小时
-//   - refreshExpiry: 刷新令牌有效期，建议7天到30天
-//   - issuer: 令牌签发者标识，通常是应用名称或域名
-//
-// 返回：JWT管理器实例
+//   - issuer: 签发者，应用名称或域名
 func NewJWTManager(secretKey string, accessExpiry, refreshExpiry time.Duration, issuer string) *JWTManager {
 	return &JWTManager{
 		secretKey:     secretKey,
@@ -65,22 +58,13 @@ func NewJWTManager(secretKey string, accessExpiry, refreshExpiry time.Duration, 
 }
 
 // GenerateToken 生成JWT令牌对（访问令牌 + 刷新令牌）
-// 参数：
-//   - claims: JWT载荷，包含用户身份和设备信息
-//
 // 返回：
 //   - *JWTToken: 包含访问令牌和刷新令牌的令牌对
 //   - error: 生成失败时返回错误
-//
-// 流程：
-//  1. 生成访问令牌（包含完整用户信息，有效期短）
-//  2. 生成刷新令牌（仅包含最小必要信息，有效期长）
-//  3. 返回令牌对
 func (j *JWTManager) GenerateToken(claims *JWTClaims) (*JWTToken, error) {
 	now := time.Now()
 
-	// 步骤1：生成访问令牌
-	// 访问令牌包含完整的用户信息，用于API认证
+	// 1、生成访问令牌
 	accessClaims := *claims
 	accessClaims.Issuer = j.issuer                                       // 设置签发者
 	accessClaims.IssuedAt = jwt.NewNumericDate(now)                      // 设置签发时间
@@ -88,11 +72,10 @@ func (j *JWTManager) GenerateToken(claims *JWTClaims) (*JWTToken, error) {
 
 	accessToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, &accessClaims).SignedString([]byte(j.secretKey))
 	if err != nil {
-		return nil, fmt.Errorf("生成访问令牌失败: %w", err)
+		return nil, fmt.Errorf("生成访问令牌失败,uid:%d,err:%w", claims.UserID, err)
 	}
 
-	// 步骤2：生成刷新令牌
-	// 刷新令牌只包含最少必要信息（用户ID和设备ID），降低安全风险
+	// 2、生成刷新令牌
 	refreshClaims := jwt.MapClaims{
 		"userId":   claims.UserID,                   // 用户ID
 		"deviceId": claims.DeviceID,                 // 设备ID
@@ -107,7 +90,6 @@ func (j *JWTManager) GenerateToken(claims *JWTClaims) (*JWTToken, error) {
 		return nil, fmt.Errorf("生成刷新令牌失败: %w", err)
 	}
 
-	// 步骤3：返回令牌对
 	return &JWTToken{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
@@ -117,17 +99,9 @@ func (j *JWTManager) GenerateToken(claims *JWTClaims) (*JWTToken, error) {
 
 // ValidateToken 验证访问令牌的有效性
 // 参数：
+//   - deviceId: 设备ID，用于验证令牌是否在正确的设备上使用
 //   - tokenString: JWT访问令牌字符串
-//
-// 返回：
-//   - *JWTClaims: 解析后的JWT载荷信息
-//   - error: 验证失败时返回错误（如令牌过期、签名无效等）
-//
-// 流程：
-//  1. 解析令牌并验证签名方法
-//  2. 验证令牌签名和有效期
-//  3. 返回解析后的Claims
-func (j *JWTManager) ValidateToken(tokenString string) (*JWTClaims, error) {
+func (j *JWTManager) ValidateToken(deviceId string, tokenString string) (*JWTClaims, error) {
 	// 1、解析令牌
 	token, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
 		// 验证签名方法是否为HMAC
@@ -147,12 +121,16 @@ func (j *JWTManager) ValidateToken(tokenString string) (*JWTClaims, error) {
 		return nil, errors.New("无效的令牌")
 	}
 
-	// 3、返回Claims
+	// 3、验证设备ID是否匹配（防止令牌盗用）
+	if claims.DeviceID != deviceId {
+		return nil, errors.New("设备ID不匹配")
+	}
+
 	return claims, nil
 }
 
 // ValidateRefreshToken 验证刷新令牌的有效性
-func (j *JWTManager) ValidateRefreshToken(tokenString string) (map[string]interface{}, error) {
+func (j *JWTManager) ValidateRefreshToken(deviceId string, tokenString string) (map[string]interface{}, error) {
 	// 1、解析刷新令牌
 	token, err := jwt.ParseWithClaims(tokenString, jwt.MapClaims{}, func(token *jwt.Token) (interface{}, error) {
 		// 验证签名方法是否为HMAC
@@ -171,64 +149,53 @@ func (j *JWTManager) ValidateRefreshToken(tokenString string) (map[string]interf
 		return nil, errors.New("无效的刷新令牌")
 	}
 
-	// 2、检查token类型，防止访问令牌被误用为刷新令牌
+	// 2. 设备ID是否匹配（防止令牌盗用）
+	refreshDeviceID, ok := claims["deviceId"].(string)
+	if !ok || refreshDeviceID != deviceId {
+		return nil, errors.New("设备ID不匹配")
+	}
+
+	// 3、检查token类型，防止访问令牌被误用为刷新令牌
 	tokenType, ok := claims["type"].(string)
 	if !ok || tokenType != "refresh" {
 		return nil, errors.New("不是刷新令牌")
 	}
 
-	// 3、返回Claims
 	return claims, nil
 }
 
 // RefreshToken 使用刷新令牌获取新的令牌对
-// 返回：新的令牌对（访问令牌 + 刷新令牌）
-// 流程：
 //  1. 验证刷新令牌的有效性
 //  2. 验证用户ID和设备ID是否匹配（防止令牌盗用）
-//  3. 生成新的令牌对并返回
-func (j *JWTManager) RefreshToken(refreshTokenString string, deviceID string, userID int64, ip, country, platform, version string) (*JWTToken, error) {
-	// 步骤1：验证刷新令牌
-	claims, err := j.ValidateRefreshToken(refreshTokenString)
+//  3. 使用新的Claims生成令牌对并返回
+func (j *JWTManager) RefreshToken(deviceId string, refreshTokenString string, newClaims *JWTClaims) (*JWTToken, error) {
+	// 1、验证刷新令牌
+	refreshClaims, err := j.ValidateRefreshToken(deviceId, refreshTokenString)
 	if err != nil {
 		return nil, err
 	}
 
-	// 步骤2：验证用户ID和设备ID匹配，防止令牌被盗用
-	// JSON解析时数字类型会被转换为float64
-	refreshUserID, ok := claims["userId"].(float64)
-	if !ok || int64(refreshUserID) != userID {
+	// 2、验证用户ID和设备ID匹配，防止令牌被盗用
+	refreshUserID, ok := refreshClaims["userId"].(float64)
+	if !ok || int64(refreshUserID) != newClaims.UserID {
 		return nil, errors.New("用户ID不匹配")
 	}
 
-	refreshDeviceID, ok := claims["deviceId"].(string)
-	if !ok || refreshDeviceID != deviceID {
+	refreshDeviceID, ok := refreshClaims["deviceId"].(string)
+	if !ok || refreshDeviceID != newClaims.DeviceID {
 		return nil, errors.New("设备ID不匹配")
 	}
 
-	// 步骤3：生成新的令牌对
-	newClaims := &JWTClaims{
-		UserInfo: UserInfo{
-			UserID:   userID,
-			DeviceID: deviceID,
-			Platform: platform,
-			IP:       ip,
-			Country:  country,
-			Version:  version,
-		},
-	}
-
+	// 3、使用新的Claims生成令牌对
 	return j.GenerateToken(newClaims)
 }
 
-// ExtractUserInfo 从访问令牌中提取完整的用户信息
-// - error: 提取失败时返回错误（如令牌过期、签名无效等）
-// 使用场景：需要获取完整用户信息时使用此方法，避免多次解析令牌
-func (j *JWTManager) ExtractUserInfo(tokenString string) (*UserInfo, error) {
+// ExtractUserInfo 从访问令牌中提取用户信息
+func (j *JWTManager) ExtractUserInfo(deviceId string, tokenString string) (UserInfo, error) {
 	// 验证并解析令牌
-	claims, err := j.ValidateToken(tokenString)
+	claims, err := j.ValidateToken(deviceId, tokenString)
 	if err != nil {
-		return nil, err
+		return UserInfo{}, err
 	}
-	return &claims.UserInfo, nil
+	return claims.UserInfo, nil
 }
