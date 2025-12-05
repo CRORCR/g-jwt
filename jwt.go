@@ -1,15 +1,32 @@
 package jwt
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/golang-jwt/jwt/v5"
 	"time"
 )
 
-// UserInfo 用户信息结构体
-// 包含用户身份、设备信息和其他关键字段
-// 用于JWT Claims的数据载体，也用于从令牌中提取用户信息
+type JWTService interface {
+	// GenerateToken 生成JWT令牌对（访问令牌 + 刷新令牌）
+	GenerateToken(ctx context.Context, claims *JWTClaims) (*JWTToken, error)
+
+	// ValidateToken 验证访问令牌的有效性
+	ValidateToken(ctx context.Context, deviceId string, tokenString string) (*JWTClaims, error)
+
+	// RefreshToken 使用刷新令牌获取新的令牌对
+	RefreshToken(ctx context.Context, deviceId string, refreshTokenString string, newClaims *JWTClaims) (*JWTToken, error)
+
+	// ExtractUserInfo 从访问令牌中提取用户信息
+	ExtractUserInfo(ctx context.Context, deviceId string, tokenString string) (UserInfo, error)
+}
+
+var (
+	_ JWTService = (*JWTManager)(nil)
+	_ JWTService = (*JWTManagerV2)(nil)
+)
+
 type UserInfo struct {
 	UserID       int64  `json:"userId"`                 // 用户ID
 	Email        string `json:"email,omitempty"`        // 邮箱
@@ -22,11 +39,11 @@ type UserInfo struct {
 	RegisterTime int64  `json:"registerTime,omitempty"` // 注册时间（Unix时间戳）
 }
 
-// JWTClaims
-// 用于访问令牌(Access Token)的payload部分
+// JWTClaims 访问令牌(Access Token)的payload部分
 type JWTClaims struct {
 	UserInfo
-	jwt.RegisteredClaims // JWT标准声明字段（iss、exp、iat等）
+	TokenVersion         int64 `json:"tokenVersion,omitempty"` // Token版本号（纳秒时间戳），用于互踢功能
+	jwt.RegisteredClaims       // JWT标准声明字段（iss、exp、iat等）
 }
 
 // JWTManager JWT管理器 负责JWT令牌的生成、验证和刷新
@@ -44,10 +61,7 @@ type JWTToken struct {
 	ExpiresIn    int64  `json:"expiresIn"` // accessToken过期时间，单位：秒
 }
 
-// NewJWTManager 创建JWT管理器
-// 参数：
-//   - secretKey: 用于签名的密钥，建议使用强随机字符串（至少32字符）
-//   - issuer: 签发者，应用名称或域名
+// NewJWTManager 创建JWT管理器 secretKey: 用于签名的密钥，建议使用强随机字符串（至少32字符） issuer: 签发者，应用名称或域名
 func NewJWTManager(secretKey string, accessExpiry, refreshExpiry time.Duration, issuer string) *JWTManager {
 	return &JWTManager{
 		secretKey:     secretKey,
@@ -58,10 +72,7 @@ func NewJWTManager(secretKey string, accessExpiry, refreshExpiry time.Duration, 
 }
 
 // GenerateToken 生成JWT令牌对（访问令牌 + 刷新令牌）
-// 返回：
-//   - *JWTToken: 包含访问令牌和刷新令牌的令牌对
-//   - error: 生成失败时返回错误
-func (j *JWTManager) GenerateToken(claims *JWTClaims) (*JWTToken, error) {
+func (j *JWTManager) GenerateToken(_ context.Context, claims *JWTClaims) (*JWTToken, error) {
 	now := time.Now()
 
 	// 1、生成访问令牌
@@ -98,10 +109,7 @@ func (j *JWTManager) GenerateToken(claims *JWTClaims) (*JWTToken, error) {
 }
 
 // ValidateToken 验证访问令牌的有效性
-// 参数：
-//   - deviceId: 设备ID，用于验证令牌是否在正确的设备上使用
-//   - tokenString: JWT访问令牌字符串
-func (j *JWTManager) ValidateToken(deviceId string, tokenString string) (*JWTClaims, error) {
+func (j *JWTManager) ValidateToken(_ context.Context, deviceId string, tokenString string) (*JWTClaims, error) {
 	// 1、解析令牌
 	token, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
 		// 验证签名方法是否为HMAC
@@ -130,7 +138,7 @@ func (j *JWTManager) ValidateToken(deviceId string, tokenString string) (*JWTCla
 }
 
 // ValidateRefreshToken 验证刷新令牌的有效性
-func (j *JWTManager) ValidateRefreshToken(deviceId string, tokenString string) (map[string]interface{}, error) {
+func (j *JWTManager) ValidateRefreshToken(_ context.Context, deviceId string, tokenString string) (map[string]interface{}, error) {
 	// 1、解析刷新令牌
 	token, err := jwt.ParseWithClaims(tokenString, jwt.MapClaims{}, func(token *jwt.Token) (interface{}, error) {
 		// 验证签名方法是否为HMAC
@@ -165,12 +173,9 @@ func (j *JWTManager) ValidateRefreshToken(deviceId string, tokenString string) (
 }
 
 // RefreshToken 使用刷新令牌获取新的令牌对
-//  1. 验证刷新令牌的有效性
-//  2. 验证用户ID和设备ID是否匹配（防止令牌盗用）
-//  3. 使用新的Claims生成令牌对并返回
-func (j *JWTManager) RefreshToken(deviceId string, refreshTokenString string, newClaims *JWTClaims) (*JWTToken, error) {
+func (j *JWTManager) RefreshToken(ctx context.Context, deviceId string, refreshTokenString string, newClaims *JWTClaims) (*JWTToken, error) {
 	// 1、验证刷新令牌
-	refreshClaims, err := j.ValidateRefreshToken(deviceId, refreshTokenString)
+	refreshClaims, err := j.ValidateRefreshToken(ctx, deviceId, refreshTokenString)
 	if err != nil {
 		return nil, err
 	}
@@ -187,13 +192,13 @@ func (j *JWTManager) RefreshToken(deviceId string, refreshTokenString string, ne
 	}
 
 	// 3、使用新的Claims生成令牌对
-	return j.GenerateToken(newClaims)
+	return j.GenerateToken(ctx, newClaims)
 }
 
 // ExtractUserInfo 从访问令牌中提取用户信息
-func (j *JWTManager) ExtractUserInfo(deviceId string, tokenString string) (UserInfo, error) {
+func (j *JWTManager) ExtractUserInfo(ctx context.Context, deviceId string, tokenString string) (UserInfo, error) {
 	// 验证并解析令牌
-	claims, err := j.ValidateToken(deviceId, tokenString)
+	claims, err := j.ValidateToken(ctx, deviceId, tokenString)
 	if err != nil {
 		return UserInfo{}, err
 	}
