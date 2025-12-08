@@ -215,6 +215,42 @@ func (v2 *JWTManagerV2) ExtractUserInfo(ctx context.Context, deviceId string, to
 	return claims.UserInfo, nil
 }
 
+// ExtractUserInfoWithGuest 支持游客模式：如果token为空返回游客信息，如果token存在则必须验证通过
+// - 如果 deviceId 为空：返回错误（无效数据）
+// - 如果 tokenString 为空：返回游客信息，不报错
+// - 如果 tokenString 不为空但无效/过期/被踢出：返回错误，要求重新登录
+// - 如果 tokenString 有效：返回用户信息
+func (v2 *JWTManagerV2) ExtractUserInfoWithGuest(ctx context.Context, deviceId string, tokenString string) (UserInfo, error) {
+	if deviceId == "" {
+		return UserInfo{}, fmt.Errorf("设备ID不能为空")
+	}
+
+	// 如果token为空，直接返回游客信息
+	if tokenString == "" {
+		return v2.createGuestUserInfo(deviceId), nil
+	}
+
+	// token不为空，必须验证通过
+	userInfo, err := v2.ExtractUserInfo(ctx, deviceId, tokenString)
+	if err != nil {
+		// token无效、过期、被踢出或验证失败，返回错误要求重新登录
+		return UserInfo{}, err
+	}
+
+	// token有效，返回正常用户信息
+	userInfo.IsGuest = false
+	return userInfo, nil
+}
+
+// createGuestUserInfo 创建游客用户信息
+func (v2 *JWTManagerV2) createGuestUserInfo(deviceId string) UserInfo {
+	return UserInfo{
+		UserID:   0, // 游客用户ID为0
+		DeviceID: deviceId,
+		IsGuest:  true,
+	}
+}
+
 // KickOutDevice 主动踢出指定设备
 func (v2 *JWTManagerV2) KickOutDevice(ctx context.Context, userID int64, deviceID string) error {
 	if !v2.enableKickOut {

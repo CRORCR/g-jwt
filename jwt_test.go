@@ -374,3 +374,77 @@ func TestDeviceIDMismatch(t *testing.T) {
 	assert.Error(t, err, "使用错误的设备ID提取用户信息应该失败")
 	assert.Contains(t, err.Error(), "设备ID不匹配", "错误信息应该包含'设备ID不匹配'")
 }
+
+// TestGuestMode 测试游客模式
+func TestGuestMode(t *testing.T) {
+	manager := NewJWTManager(
+		"test-secret-key-for-jwt-signing-at-least-32-chars",
+		15*time.Minute,
+		7*24*time.Hour,
+		"test-issuer",
+	)
+
+	ctx := context.Background()
+
+	// 测试1：空token应该返回游客信息，不报错
+	guestInfo, err := manager.ExtractUserInfoWithGuest(ctx, "guest-device-1", "")
+	require.NoError(t, err, "空token不应该返回错误")
+	assert.True(t, guestInfo.IsGuest, "空token应该返回游客模式")
+	assert.Equal(t, int64(0), guestInfo.UserID, "游客的UserID应该为0")
+	assert.Equal(t, "guest-device-1", guestInfo.DeviceID, "设备ID应该匹配")
+
+	// 测试2：无效token应该返回错误（要求重新登录）
+	_, err = manager.ExtractUserInfoWithGuest(ctx, "guest-device-2", "invalid.token.string")
+	assert.Error(t, err, "无效token应该返回错误")
+
+	// 测试3：有效token应该返回正常用户信息
+	claims := &JWTClaims{
+		UserInfo: UserInfo{
+			UserID:   12345,
+			Email:    "test@example.com",
+			DeviceID: "normal-device",
+			Platform: "mac",
+		},
+	}
+	tokenPair, err := manager.GenerateToken(ctx, claims)
+	require.NoError(t, err)
+
+	normalUserInfo, err := manager.ExtractUserInfoWithGuest(ctx, "normal-device", tokenPair.AccessToken)
+	require.NoError(t, err, "有效token应该验证成功")
+	assert.False(t, normalUserInfo.IsGuest, "有效token不应该是游客模式")
+	assert.Equal(t, int64(12345), normalUserInfo.UserID, "用户ID应该匹配")
+	assert.Equal(t, "test@example.com", normalUserInfo.Email, "邮箱应该匹配")
+	assert.Equal(t, "normal-device", normalUserInfo.DeviceID, "设备ID应该匹配")
+
+	// 测试4：过期token应该返回错误（要求重新登录）
+	shortLivedManager := NewJWTManager(
+		"test-secret-key-for-jwt-signing-at-least-32-chars",
+		1*time.Millisecond, // 1毫秒后过期
+		7*24*time.Hour,
+		"test-issuer",
+	)
+	expiredTokenPair, err := shortLivedManager.GenerateToken(ctx, claims)
+	require.NoError(t, err)
+
+	time.Sleep(10 * time.Millisecond) // 等待token过期
+
+	_, err = shortLivedManager.ExtractUserInfoWithGuest(ctx, "normal-device", expiredTokenPair.AccessToken)
+	assert.Error(t, err, "过期token应该返回错误")
+
+	// 测试5：设备ID不匹配应该返回错误（要求重新登录）
+	_, err = manager.ExtractUserInfoWithGuest(ctx, "wrong-device", tokenPair.AccessToken)
+	assert.Error(t, err, "设备ID不匹配应该返回错误")
+	assert.Contains(t, err.Error(), "设备ID不匹配", "错误信息应该包含'设备ID不匹配'")
+
+	// 测试6：空的 deviceId 应该返回错误
+	_, err = manager.ExtractUserInfoWithGuest(ctx, "", "")
+	assert.Error(t, err, "空的deviceId应该返回错误")
+	assert.Contains(t, err.Error(), "设备ID不能为空", "错误信息应该包含'设备ID不能为空'")
+
+	// 测试7：空的 deviceId 即使有有效token也应该返回错误
+	_, err = manager.ExtractUserInfoWithGuest(ctx, "", tokenPair.AccessToken)
+	assert.Error(t, err, "空的deviceId即使有有效token也应该返回错误")
+	assert.Contains(t, err.Error(), "设备ID不能为空", "错误信息应该包含'设备ID不能为空'")
+
+	t.Logf("游客模式测试通过")
+}
