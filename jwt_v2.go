@@ -183,6 +183,56 @@ func (v2 *JWTManagerV2) ValidateToken(ctx context.Context, deviceId string, toke
 	return claims, nil
 }
 
+// ValidateRefreshToken 验证刷新令牌的有效性
+// 如果启用互踢，会检查当前token版本是否为最新
+func (v2 *JWTManagerV2) ValidateRefreshToken(ctx context.Context, deviceId string, tokenString string) (map[string]interface{}, error) {
+	// 调用基础服务验证刷新令牌
+	claims, err := v2.base.ValidateRefreshToken(ctx, deviceId, tokenString)
+	if err != nil {
+		return nil, err
+	}
+
+	// 如果启用互踢，检查token版本
+	if v2.enableKickOut {
+		// 从刷新令牌中提取用户ID和设备ID
+		userIDFloat, ok := claims["userId"].(float64)
+		if !ok {
+			return nil, fmt.Errorf("invalid userId in refresh token")
+		}
+		userID := int64(userIDFloat)
+
+		deviceID, ok := claims["deviceId"].(string)
+		if !ok {
+			return nil, fmt.Errorf("invalid deviceId in refresh token")
+		}
+
+		// 检查该设备是否被踢出（版本是否为-1）
+		cacheKey := v2.getCacheKey(userID, deviceID)
+		if cachedVersion, found := v2.localCache.Get(cacheKey); found {
+			if cachedVersion == -1 {
+				return nil, fmt.Errorf("device has been kicked out")
+			}
+		}
+
+		// 查询Redis确认最新版本
+		redisKey := v2.getRedisKey(userID, deviceID)
+		versionStr, err := v2.redis.Get(ctx, redisKey)
+		if err == nil {
+			// Redis查询成功，更新本地缓存
+			var latestVersion int64
+			_, err = fmt.Sscanf(versionStr, "%d", &latestVersion)
+			if err == nil {
+				v2.localCache.Set(cacheKey, latestVersion, v2.localCacheTTL)
+				if latestVersion == -1 {
+					return nil, fmt.Errorf("device has been kicked out")
+				}
+			}
+		}
+	}
+
+	return claims, nil
+}
+
 // RefreshToken 刷新令牌
 func (v2 *JWTManagerV2) RefreshToken(ctx context.Context, deviceId string, refreshTokenString string, newClaims *JWTClaims) (*JWTToken, error) {
 	// 如果启用互踢，生成新版本号

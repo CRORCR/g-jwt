@@ -15,6 +15,9 @@ type JWTService interface {
 	// ValidateToken 验证访问令牌的有效性，设备号防泄漏
 	ValidateToken(ctx context.Context, deviceId string, tokenString string) (*JWTClaims, error)
 
+	// ValidateRefreshToken 验证刷新令牌的有效性，设备号防泄漏
+	ValidateRefreshToken(ctx context.Context, deviceId string, tokenString string) (map[string]interface{}, error)
+
 	// RefreshToken 使用刷新令牌获取新的令牌对
 	RefreshToken(ctx context.Context, deviceId string, refreshTokenString string, newClaims *JWTClaims) (*JWTToken, error)
 
